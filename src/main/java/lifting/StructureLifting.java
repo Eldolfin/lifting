@@ -2,11 +2,16 @@
 package lifting;
 
 import com.seedfinding.mccore.rand.ChunkRand;
+import com.seedfinding.mccore.rand.seed.StructureSeed;
 import com.seedfinding.mccore.util.pos.CPos;
 import com.seedfinding.mccore.util.pos.RPos;
 import com.seedfinding.mccore.version.MCVersion;
 import com.seedfinding.mcfeature.structure.*;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -16,7 +21,7 @@ import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 public class StructureLifting {
-    public static final MCVersion VERSION = MCVersion.v1_17;
+    public static final MCVersion VERSION = MCVersion.v1_19;
 
     public static final DesertPyramid DESERT_PYRAMID = new DesertPyramid(VERSION);
     public static final SwampHut SWAMP_HUT = new SwampHut(VERSION);
@@ -26,22 +31,48 @@ public class StructureLifting {
     public static final PillagerOutpost PILLAGER_OUTPOST = new PillagerOutpost(VERSION);
     public static final Shipwreck SHIPWRECK = new Shipwreck(VERSION);
 
+    public static final int MAX_STRUCTURE_OFFSET = 2;
 
-    public static void main(String[] args) {
-        long structureSeed = 90212;
-        List<Data> dataList = new ArrayList<>();
 
-        dataList.addAll(generateData(structureSeed, SWAMP_HUT, 3));
-        dataList.addAll(generateData(structureSeed, VILLAGE, 3));
-        dataList.addAll(generateData(structureSeed, IGLOO, 3));
-        dataList.addAll(generateData(structureSeed, PILLAGER_OUTPOST, 3));
-        dataList.addAll(generateData(structureSeed, DESERT_PYRAMID, 3));
-        dataList.addAll(generateData(structureSeed, JUNGLE_TEMPLE, 3));
-        dataList.addAll(generateData(structureSeed, SHIPWRECK, 3));
-        List<Long> seeds = crack(dataList);
-        for (Long seed : seeds) {
-            System.out.println(seed);
+    public static void main(String[] args) throws IOException {
+        List<Long> worldSeeds = new ArrayList<>();
+
+//        for (int i = 0; i < 2; i++) {
+//            for (int j = 0; j < 2; j++) {
+        List<Data> res = new ArrayList<>(5);
+        res.add(new Data(SHIPWRECK, 275, -57));
+        res.add(new Data(SHIPWRECK, 194, -167));
+        res.add(new Data(SHIPWRECK, -41, -81));
+        res.add(new Data(SWAMP_HUT, 207, -137));
+        res.add(new Data(PILLAGER_OUTPOST, 164, 83));
+
+        res.add(new Data(PILLAGER_OUTPOST, -20, -50));
+        res.add(new Data(SHIPWRECK, -22, -57));
+
+        List<Data> dataList = new ArrayList<>(res);
+        List<Long> structureSeeds = crack(dataList);
+        System.out.println("Structure seeds: " + structureSeeds.size());
+        for (Long sseed : structureSeeds) {
+            worldSeeds.addAll(StructureSeed.toRandomWorldSeeds(sseed));
         }
+
+//            }
+//        }
+
+
+        System.out.println("World seeds: " + worldSeeds.size());
+        File file = new File("./seeds.txt");
+        if (!file.exists()) {
+            file.createNewFile();
+        }
+        FileWriter fw = new FileWriter(file);
+        BufferedWriter bw = new BufferedWriter(fw);
+        for (Long wseed : worldSeeds) {
+//            System.out.println(wseed);
+            bw.write(wseed.toString() + "\n");
+        }
+        bw.flush();
+        bw.close();
     }
 
     public static List<Long> crack(List<Data> dataList) {
@@ -49,10 +80,23 @@ public class StructureLifting {
         // Then lift on 1<<19 with those 1<<18 fixed with % 4 and for nextInt(24)
         // You can even do %8 on 1<<20 (however we included shipwreck so only nextInt(20) so 1<<19 is the max here
         Stream<Long> lowerBitsStream = LongStream.range(0, 1L << 19).boxed().filter(lowerBits -> {
-            ChunkRand rand = new ChunkRand();
             for (Data data : dataList) {
-                rand.setRegionSeed(lowerBits, data.regionData.regionX, data.regionData.regionZ, data.salt, VERSION);
-                if (rand.nextInt(data.structure.getOffset()) % 4 != data.regionData.offsetX % 4 || rand.nextInt(data.structure.getOffset()) % 4 != data.regionData.offsetZ % 4) {
+                boolean validS = false;
+                int originalX = data.regionData.chunkX;
+                int originalZ = data.regionData.chunkZ;
+                for (int x_offset = -MAX_STRUCTURE_OFFSET; x_offset <= MAX_STRUCTURE_OFFSET; x_offset++) {
+                    for (int z_offset = -MAX_STRUCTURE_OFFSET; z_offset <= MAX_STRUCTURE_OFFSET; z_offset++) {
+                        data.setRegionData(new RegionStructure.Data<>(data.structure, originalX + x_offset, originalZ + z_offset));
+                        ChunkRand rand = new ChunkRand();
+                        rand.setRegionSeed(lowerBits, data.regionData.regionX, data.regionData.regionZ, data.salt, VERSION);
+
+                        validS |= (rand.nextInt(data.structure.getOffset()) % 4 != data.regionData.offsetX % 4 || rand.nextInt(data.structure.getOffset()) % 4 != data.regionData.offsetZ % 4);
+
+                    }
+                }
+                data.setRegionData(new RegionStructure.Data<>(data.structure, originalX, originalZ));
+
+                if (!validS) {
                     return false;
                 }
             }
@@ -66,10 +110,21 @@ public class StructureLifting {
         );
 
         Stream<Long> strutureSeedStream = seedStream.filter(seed -> {
-            ChunkRand rand = new ChunkRand();
             for (Data data : dataList) {
-                rand.setRegionSeed(seed, data.regionData.regionX, data.regionData.regionZ, data.salt, VERSION);
-                if (rand.nextInt(data.structure.getOffset()) != data.regionData.offsetX || rand.nextInt(data.structure.getOffset()) != data.regionData.offsetZ) {
+                boolean validS = false;
+                int originalX = data.regionData.chunkX;
+                int originalZ = data.regionData.chunkZ;
+                for (int x_offset = -MAX_STRUCTURE_OFFSET; x_offset <= MAX_STRUCTURE_OFFSET; x_offset++) {
+                    for (int z_offset = -MAX_STRUCTURE_OFFSET; z_offset <= MAX_STRUCTURE_OFFSET; z_offset++) {
+                        data.setRegionData(new RegionStructure.Data<>(data.structure, originalX + x_offset, originalZ + z_offset));
+                        ChunkRand rand = new ChunkRand();
+                        rand.setRegionSeed(seed, data.regionData.regionX, data.regionData.regionZ, data.salt, VERSION);
+
+                        validS |= (rand.nextInt(data.structure.getOffset()) != data.regionData.offsetX || rand.nextInt(data.structure.getOffset()) != data.regionData.offsetZ);
+                    }
+                }
+                data.setRegionData(new RegionStructure.Data<>(data.structure, originalX, originalZ));
+                if (!validS) {
                     return false;
                 }
             }
@@ -85,7 +140,7 @@ public class StructureLifting {
             RPos rpos = getRandomRPos(structure);
             CPos cPos = structure.getInRegion(structureSeed, rpos.getX(), rpos.getZ(), rand);
             // WARNING Pillager outpost can be exploited to check the nextInt(5)!=0 also but they will produce some nulls here
-            if (cPos!=null){
+            if (cPos != null) {
                 res.add(new Data(structure, cPos));
             }
         }
